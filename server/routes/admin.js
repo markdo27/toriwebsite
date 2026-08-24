@@ -92,23 +92,22 @@ router.post("/photos", requireAdmin, upload.single("image"), async (req, res) =>
   if (!req.file) {
     return res.status(400).json({ error: "No image file was uploaded." });
   }
-  if (!process.env.BLOB_READ_WRITE_TOKEN) {
-    return res.status(503).json({
-      error: "Photo storage isn't configured yet. Connect Vercel Blob storage to this project.",
-    });
-  }
 
   try {
     const pathname = "torinoa/" + key + "-" + Date.now() + "." + extFor(req.file.mimetype);
     const blob = await put(pathname, req.file.buffer, {
       access: "public",
       contentType: req.file.mimetype,
+      // Explicit on purpose: if more than one Blob store is ever connected to
+      // this project, OIDC (store-ID-based) auth takes precedence over this
+      // token by default, which can silently resolve to the wrong store.
+      token: process.env.BLOB_READ_WRITE_TOKEN,
     });
 
     const { previousUrl } = await store.setSiteImage(key, blob.url);
 
     if (previousUrl) {
-      del(previousUrl).catch(() => {}); // best-effort cleanup, don't fail the request over it
+      del(previousUrl, { token: process.env.BLOB_READ_WRITE_TOKEN }).catch(() => {}); // best-effort cleanup, don't fail the request over it
     }
 
     res.json({ key, url: blob.url });
@@ -126,7 +125,7 @@ router.delete("/photos/:key", requireAdmin, async (req, res) => {
   try {
     const { previousUrl } = await store.setSiteImage(key, null);
     if (previousUrl) {
-      del(previousUrl).catch(() => {});
+      del(previousUrl, { token: process.env.BLOB_READ_WRITE_TOKEN }).catch(() => {});
     }
     res.json({ key, url: null });
   } catch (err) {
