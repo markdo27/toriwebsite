@@ -1,0 +1,82 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Torinoa — Admin</title>
+<link rel="icon" href="../assets/torinoa-crest.svg" type="image/svg+xml">
+<link rel="stylesheet" href="admin.css">
+</head>
+<body>
+
+<div id="tn-admin-login" class="tn-a-login-wrap">
+  <form id="tn-a-login-form" class="tn-a-login-card">
+    <img src="../assets/torinoa-crest.svg" alt="" class="tn-a-crest">
+    <h1>Torinoa Admin</h1>
+    <p class="tn-a-sub">Sign in to manage reservations and photos.</p>
+    <label class="tn-a-label">
+      <span>Username</span>
+      <input type="text" id="tn-a-username" autocomplete="username" required>
+    </label>
+    <label class="tn-a-label">
+      <span>Password</span>
+      <input type="password" id="tn-a-password" autocomplete="current-password" required>
+    </label>
+    <div id="tn-a-login-error" class="tn-a-error" hidden></div>
+    <button type="submit" class="tn-a-btn tn-a-btn-primary">Sign in</button>
+  </form>
+</div>
+
+<div id="tn-admin-app" class="tn-a-app" hidden>
+  <header class="tn-a-header">
+    <div class="tn-a-header-brand">
+      <img src="../assets/torinoa-crest.svg" alt="">
+      <span>Torinoa Admin</span>
+    </div>
+    <nav class="tn-a-tabs">
+      <button type="button" class="tn-a-tab active" data-tab="reservations">Reservations</button>
+      <button type="button" class="tn-a-tab" data-tab="photos">Photos</button>
+    </nav>
+    <button type="button" id="tn-a-logout" class="tn-a-btn tn-a-btn-ghost">Sign out</button>
+  </header>
+
+  <main class="tn-a-main">
+    <section id="tn-a-panel-reservations" class="tn-a-panel">
+      <div class="tn-a-panel-head">
+        <h2>Reservations</h2>
+        <div class="tn-a-summary" id="tn-a-summary"></div>
+      </div>
+      <div class="tn-a-table-wrap">
+        <table class="tn-a-table" id="tn-a-bookings-table">
+          <thead>
+            <tr>
+              <th>Date</th>
+              <th>Seating</th>
+              <th>Guests</th>
+              <th>Guest</th>
+              <th>Contact</th>
+              <th>Notes</th>
+              <th>Reference</th>
+              <th>Status</th>
+              <th>Actions</th>
+            </tr>
+          </thead>
+          <tbody id="tn-a-bookings-body"></tbody>
+        </table>
+        <p id="tn-a-bookings-empty" class="tn-a-empty" hidden>No reservation requests yet.</p>
+      </div>
+    </section>
+
+    <section id="tn-a-panel-photos" class="tn-a-panel" hidden>
+      <div class="tn-a-panel-head">
+        <h2>Photos</h2>
+        <p class="tn-a-hint">Upload a photo to replace any placeholder on the site. JPEG, PNG, WebP, or AVIF — up to 12&nbsp;MB.</p>
+      </div>
+      <div class="tn-a-photo-grid" id="tn-a-photo-grid"></div>
+    </section>
+  </main>
+</div>
+
+<script src="admin.js"></script>
+</body>
+</html>
