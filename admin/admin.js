@@ -479,15 +479,18 @@
       var tr = document.createElement("tr");
       var dateTd = document.createElement("td");
       dateTd.textContent = o.dateKey;
+      var timeTd = document.createElement("td");
+      timeTd.textContent = o.time;
       var guestsTd = document.createElement("td");
       guestsTd.textContent = o.maxGuests === 0 ? "0 (closed)" : String(o.maxGuests);
       var actionsTd = document.createElement("td");
       actionsTd.appendChild(makeActionBtn("Remove", function () {
-        api("/api/admin/capacity/overrides/" + o.dateKey, { method: "DELETE" })
+        api("/api/admin/capacity/overrides/" + encodeURIComponent(o.dateKey) + "/" + encodeURIComponent(o.time), { method: "DELETE" })
           .then(loadCapacity)
           .catch(function (err) { alert(err.message); });
       }));
       tr.appendChild(dateTd);
+      tr.appendChild(timeTd);
       tr.appendChild(guestsTd);
       tr.appendChild(actionsTd);
       body.appendChild(tr);
@@ -503,9 +506,13 @@
 
   document.getElementById("tn-a-add-override").addEventListener("click", function () {
     var dateKey = document.getElementById("tn-a-override-date").value;
+    var time = document.getElementById("tn-a-override-time").value;
     var maxGuests = Number(document.getElementById("tn-a-override-guests").value);
     if (!dateKey) { alert("Choose a date first."); return; }
-    api("/api/admin/capacity/overrides/" + dateKey, { method: "PUT", body: { maxGuests: maxGuests } })
+    api("/api/admin/capacity/overrides/" + encodeURIComponent(dateKey) + "/" + encodeURIComponent(time), {
+      method: "PUT",
+      body: { maxGuests: maxGuests },
+    })
       .then(function () {
         document.getElementById("tn-a-override-date").value = "";
         document.getElementById("tn-a-override-guests").value = "";

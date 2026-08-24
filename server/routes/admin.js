@@ -211,20 +211,24 @@ router.put("/capacity/default", requireAdmin, async (req, res) => {
   }
 });
 
-// PUT /api/admin/capacity/overrides/:dateKey  { maxGuests }
-router.put("/capacity/overrides/:dateKey", requireAdmin, async (req, res) => {
+// PUT /api/admin/capacity/overrides/:dateKey/:time  { maxGuests }
+router.put("/capacity/overrides/:dateKey/:time", requireAdmin, async (req, res) => {
   try {
-    const override = await store.setCapacityOverride(req.params.dateKey, req.body && req.body.maxGuests);
+    const override = await store.setCapacityOverride(
+      req.params.dateKey,
+      req.params.time,
+      req.body && req.body.maxGuests
+    );
     res.json(override);
   } catch (err) {
     res.status(err.statusCode || 500).json({ error: err.message || "Could not save that override." });
   }
 });
 
-// DELETE /api/admin/capacity/overrides/:dateKey
-router.delete("/capacity/overrides/:dateKey", requireAdmin, async (req, res, next) => {
+// DELETE /api/admin/capacity/overrides/:dateKey/:time
+router.delete("/capacity/overrides/:dateKey/:time", requireAdmin, async (req, res, next) => {
   try {
-    await store.deleteCapacityOverride(req.params.dateKey);
+    await store.deleteCapacityOverride(req.params.dateKey, req.params.time);
     res.json({ ok: true });
   } catch (err) {
     next(err);

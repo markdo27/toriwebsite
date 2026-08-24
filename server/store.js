@@ -126,14 +126,21 @@ async function setDefaultMaxGuests(n) {
 }
 
 async function getCapacityOverrides() {
-  const res = await db.query("SELECT date_key, max_guests FROM capacity_overrides ORDER BY date_key");
-  return res.rows.map((r) => ({ dateKey: r.date_key, maxGuests: r.max_guests }));
+  const res = await db.query(
+    "SELECT date_key, seating_time, max_guests FROM capacity_overrides ORDER BY date_key, seating_time"
+  );
+  return res.rows.map((r) => ({ dateKey: r.date_key, time: r.seating_time, maxGuests: r.max_guests }));
 }
 
-async function setCapacityOverride(dateKey, maxGuests) {
+async function setCapacityOverride(dateKey, time, maxGuests) {
   maxGuests = Number(maxGuests);
   if (!/^\d{4}-\d{2}-\d{2}$/.test(dateKey)) {
     const err = new Error("dateKey must be a YYYY-MM-DD date.");
+    err.statusCode = 400;
+    throw err;
+  }
+  if (!VALID_TIMES.includes(time)) {
+    const err = new Error("Invalid seating time.");
     err.statusCode = 400;
     throw err;
   }
@@ -143,29 +150,32 @@ async function setCapacityOverride(dateKey, maxGuests) {
     throw err;
   }
   await db.query(
-    `INSERT INTO capacity_overrides (date_key, max_guests) VALUES ($1, $2)
-     ON CONFLICT (date_key) DO UPDATE SET max_guests = EXCLUDED.max_guests`,
-    [dateKey, maxGuests]
+    `INSERT INTO capacity_overrides (date_key, seating_time, max_guests) VALUES ($1, $2, $3)
+     ON CONFLICT (date_key, seating_time) DO UPDATE SET max_guests = EXCLUDED.max_guests`,
+    [dateKey, time, maxGuests]
   );
-  return { dateKey, maxGuests };
+  return { dateKey, time, maxGuests };
 }
 
-async function deleteCapacityOverride(dateKey) {
-  await db.query("DELETE FROM capacity_overrides WHERE date_key = $1", [dateKey]);
+async function deleteCapacityOverride(dateKey, time) {
+  await db.query("DELETE FROM capacity_overrides WHERE date_key = $1 AND seating_time = $2", [dateKey, time]);
 }
 
-async function effectiveMaxGuests(dateKey, client) {
+async function effectiveMaxGuests(dateKey, time, client) {
   const c = client || db;
-  const res = await c.query("SELECT max_guests FROM capacity_overrides WHERE date_key = $1", [dateKey]);
+  const res = await c.query(
+    "SELECT max_guests FROM capacity_overrides WHERE date_key = $1 AND seating_time = $2",
+    [dateKey, time]
+  );
   if (res.rows[0]) return res.rows[0].max_guests;
   return getDefaultMaxGuests(client);
 }
 
 async function getAvailability(dateKey) {
   const closed = isDateClosed(dateKey);
-  const max = await effectiveMaxGuests(dateKey);
   const slots = {};
   for (const time of VALID_TIMES) {
+    const max = await effectiveMaxGuests(dateKey, time);
     const taken = closed ? max : await activeGuestsFor(dateKey, time);
     slots[time] = {
       capacity: max,
@@ -213,7 +223,7 @@ async function createBooking({ dateKey, time, guests, name, phone, notes }) {
   return withTransaction(async (client) => {
     await client.query("SELECT pg_advisory_xact_lock($1)", [slotLockKey(dateKey, time)]);
 
-    const max = await effectiveMaxGuests(dateKey, client);
+    const max = await effectiveMaxGuests(dateKey, time, client);
     if (guests > max) {
       const err = new Error("This seating allows at most " + max + " guest(s).");
       err.statusCode = 400;

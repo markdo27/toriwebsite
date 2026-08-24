@@ -260,11 +260,14 @@ input, textarea, button { font-family: inherit; }
   display: flex; align-items: flex-end; gap: 14px; flex-wrap: wrap;
   margin-bottom: 20px;
 }
-.tn-a-override-form input {
+.tn-a-override-form input,
+.tn-a-override-form select {
   background: var(--tn-surface-2);
   border: 1px solid rgba(245,242,236,0.2);
   color: var(--tn-text);
   padding: 10px 12px;
   font-size: 14px;
+  font-family: inherit;
 }
 .tn-a-override-form input[type="number"] { width: 100px; }
+.tn-a-override-form select { width: 140px; }

@@ -111,11 +111,19 @@
       </div>
 
       <div class="tn-a-capacity-overrides">
-        <h3>Date overrides</h3>
+        <h3>Seating overrides</h3>
+        <p class="tn-a-hint" style="margin-bottom:16px">Each seating on a date can have its own cap — set 6:00&nbsp;PM and 8:30&nbsp;PM separately, or override just one and leave the other on the default.</p>
         <div class="tn-a-override-form">
           <label class="tn-a-label">
             <span>Date</span>
             <input type="date" id="tn-a-override-date">
+          </label>
+          <label class="tn-a-label">
+            <span>Seating</span>
+            <select id="tn-a-override-time">
+              <option value="6:00 PM">6:00 PM</option>
+              <option value="8:30 PM">8:30 PM</option>
+            </select>
           </label>
           <label class="tn-a-label">
             <span>Max guests</span>
@@ -126,11 +134,11 @@
         <div class="tn-a-table-wrap">
           <table class="tn-a-table" id="tn-a-overrides-table">
             <thead>
-              <tr><th>Date</th><th>Max guests</th><th>Actions</th></tr>
+              <tr><th>Date</th><th>Seating</th><th>Max guests</th><th>Actions</th></tr>
             </thead>
             <tbody id="tn-a-overrides-body"></tbody>
           </table>
-          <p id="tn-a-overrides-empty" class="tn-a-empty" hidden>No date overrides — every day uses the default above.</p>
+          <p id="tn-a-overrides-empty" class="tn-a-empty" hidden>No overrides — every seating uses the default above.</p>
         </div>
       </div>
     </section>

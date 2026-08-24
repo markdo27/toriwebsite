@@ -30,49 +30,92 @@ function getPool() {
   return pool;
 }
 
+async function migrateCapacityOverrides(pool) {
+  const cols = await pool.query(
+    `SELECT column_name FROM information_schema.columns WHERE table_name = 'capacity_overrides'`
+  );
+  const names = cols.rows.map((r) => r.column_name);
+
+  if (names.length === 0) {
+    await pool.query(`
+      CREATE TABLE capacity_overrides (
+        date_key TEXT NOT NULL,
+        seating_time TEXT NOT NULL,
+        max_guests INTEGER NOT NULL,
+        PRIMARY KEY (date_key, seating_time)
+      );
+    `);
+    return;
+  }
+
+  if (!names.includes("seating_time")) {
+    // Older shape: one override per date, applied to both seatings. Expand
+    // each row into one per seating time so existing overrides keep behaving
+    // exactly as they did before (same cap on both), just now stored the
+    // same way a single-seating override would be.
+    const old = await pool.query(`SELECT date_key, max_guests FROM capacity_overrides`);
+    await pool.query(`DROP TABLE capacity_overrides`);
+    await pool.query(`
+      CREATE TABLE capacity_overrides (
+        date_key TEXT NOT NULL,
+        seating_time TEXT NOT NULL,
+        max_guests INTEGER NOT NULL,
+        PRIMARY KEY (date_key, seating_time)
+      );
+    `);
+    for (const row of old.rows) {
+      for (const time of ["6:00 PM", "8:30 PM"]) {
+        await pool.query(
+          `INSERT INTO capacity_overrides (date_key, seating_time, max_guests) VALUES ($1, $2, $3)`,
+          [row.date_key, time, row.max_guests]
+        );
+      }
+    }
+  }
+}
+
 async function ensureSchema() {
   if (schemaReady) return schemaReady;
-  schemaReady = getPool().query(`
-    CREATE TABLE IF NOT EXISTS bookings (
-      id UUID PRIMARY KEY,
-      reference TEXT NOT NULL,
-      date_key TEXT NOT NULL,
-      seating_time TEXT NOT NULL,
-      guests INTEGER NOT NULL,
-      name TEXT NOT NULL,
-      phone TEXT NOT NULL,
-      notes TEXT NOT NULL DEFAULT '',
-      status TEXT NOT NULL DEFAULT 'pending',
-      created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-      updated_at TIMESTAMPTZ
-    );
-    CREATE INDEX IF NOT EXISTS bookings_date_time_idx ON bookings (date_key, seating_time);
+  schemaReady = (async () => {
+    const pool = getPool();
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS bookings (
+        id UUID PRIMARY KEY,
+        reference TEXT NOT NULL,
+        date_key TEXT NOT NULL,
+        seating_time TEXT NOT NULL,
+        guests INTEGER NOT NULL,
+        name TEXT NOT NULL,
+        phone TEXT NOT NULL,
+        notes TEXT NOT NULL DEFAULT '',
+        status TEXT NOT NULL DEFAULT 'pending',
+        created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+        updated_at TIMESTAMPTZ
+      );
+      CREATE INDEX IF NOT EXISTS bookings_date_time_idx ON bookings (date_key, seating_time);
 
-    CREATE TABLE IF NOT EXISTS site_images (
-      key TEXT PRIMARY KEY,
-      url TEXT
-    );
+      CREATE TABLE IF NOT EXISTS site_images (
+        key TEXT PRIMARY KEY,
+        url TEXT
+      );
 
-    CREATE TABLE IF NOT EXISTS site_text (
-      key TEXT PRIMARY KEY,
-      value TEXT
-    );
+      CREATE TABLE IF NOT EXISTS site_text (
+        key TEXT PRIMARY KEY,
+        value TEXT
+      );
 
-    CREATE TABLE IF NOT EXISTS site_sections (
-      key TEXT PRIMARY KEY,
-      visible BOOLEAN NOT NULL DEFAULT TRUE
-    );
+      CREATE TABLE IF NOT EXISTS site_sections (
+        key TEXT PRIMARY KEY,
+        visible BOOLEAN NOT NULL DEFAULT TRUE
+      );
 
-    CREATE TABLE IF NOT EXISTS site_settings (
-      key TEXT PRIMARY KEY,
-      value TEXT
-    );
-
-    CREATE TABLE IF NOT EXISTS capacity_overrides (
-      date_key TEXT PRIMARY KEY,
-      max_guests INTEGER NOT NULL
-    );
-  `);
+      CREATE TABLE IF NOT EXISTS site_settings (
+        key TEXT PRIMARY KEY,
+        value TEXT
+      );
+    `);
+    await migrateCapacityOverrides(pool);
+  })();
   try {
     await schemaReady;
   } catch (err) {
