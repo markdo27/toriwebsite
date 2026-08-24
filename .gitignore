@@ -1,6 +1,4 @@
 node_modules/
 .env
-uploads/*
-!uploads/.gitkeep
-data/bookings.json
-data/site-content.json
+.env.local
+.vercel

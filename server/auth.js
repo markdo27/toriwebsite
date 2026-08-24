@@ -1,6 +1,7 @@
 "use strict";
 
 const bcrypt = require("bcryptjs");
+const { readSession } = require("./session");
 
 function checkCredentials(username, password) {
   const expectedUser = process.env.ADMIN_USERNAME;
@@ -17,7 +18,11 @@ function checkCredentials(username, password) {
 }
 
 function requireAdmin(req, res, next) {
-  if (req.session && req.session.isAdmin) return next();
+  const session = readSession(req);
+  if (session) {
+    req.adminUser = session.username;
+    return next();
+  }
   return res.status(401).json({ error: "Not authenticated." });
 }
 

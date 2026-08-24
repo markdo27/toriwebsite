@@ -1,68 +1,112 @@
 # Torinoa website
 
-A single restaurant site with a small Node/Express backend for reservations,
-owner email notifications, seat-capacity enforcement, and a photo-upload
-admin panel.
+A restaurant site with a small backend for reservations, owner email
+notifications, seat-capacity enforcement, and a photo-upload admin panel —
+built to deploy on **Vercel**.
 
-## Running it
+## Architecture
+
+- **Frontend**: static `index.html` / `css/` / `js/` / `assets/`, plus a
+  static `admin/` dashboard. Served directly by Vercel's static hosting.
+- **Backend**: one Express app (`server/app.js`) used two ways:
+  - Locally, `server/index.js` runs it as a normal Node server
+    (`app.listen`).
+  - On Vercel, `api/index.js` exports the same app as a serverless
+    function; `vercel.json` routes every `/api/*` request to it.
+- **Data**: Postgres (bookings, and which photo replaces which
+  placeholder) — a serverless function's filesystem is read-only and
+  wiped between invocations, so nothing can be saved to a local file or
+  disk the way the very first version of this app did.
+- **Photo uploads**: Vercel Blob storage, for the same reason — uploaded
+  files can't live on local disk in a serverless deployment.
+- **Admin login**: a signed cookie (HMAC, stateless) instead of
+  server-side sessions — serverless instances don't share memory, so a
+  session store that lived in server memory would randomly log people out.
+
+## Deploying to Vercel
+
+1. **Push this repo to GitHub** (already done — `markdo27/toriwebsite`),
+   then import it in the Vercel dashboard (New Project → import the repo).
+   Vercel auto-detects the Node serverless function in `api/` and the
+   static files at the root; no build command is needed.
+
+2. **Add a Postgres database.** In the project's **Storage** tab →
+   *Create Database* → **Postgres** → *Connect to Project*. This
+   automatically sets `POSTGRES_URL` (and a couple of related vars) for
+   you — nothing to copy by hand.
+
+3. **Add Blob storage.** Same **Storage** tab → *Create* → **Blob** →
+   *Connect to Project*. This sets `BLOB_READ_WRITE_TOKEN` for you.
+
+4. **Set the remaining environment variables** (Project → Settings →
+   Environment Variables):
+
+   | Variable | What it's for |
+   |---|---|
+   | `SESSION_SECRET` | Signs the admin login cookie. Generate: `node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"` |
+   | `ADMIN_USERNAME` | Owner's dashboard login username |
+   | `ADMIN_PASSWORD_HASH` | Owner's dashboard login password, hashed — see below |
+   | `OWNER_EMAIL` | Where new-booking notification emails go |
+   | `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASS`, `SMTP_FROM` | An SMTP account to send those emails from (Gmail App Password, Outlook, or any transactional provider's SMTP relay) |
+
+   Set a password hash with:
+   ```bash
+   npm run hash-password -- "your-new-password"
+   ```
+   then paste the printed value in as `ADMIN_PASSWORD_HASH`.
+
+5. **Deploy.** Vercel redeploys automatically on every push to the
+   connected branch.
+
+Until SMTP + `OWNER_EMAIL` are set, bookings still save and show up in
+`/admin` — the server just skips the email instead of failing the
+booking.
+
+## Local development
 
 ```bash
 npm install
+vercel link          # first time only — links this folder to the Vercel project
+vercel env pull .env.local   # pulls POSTGRES_URL, BLOB_READ_WRITE_TOKEN, etc. from Vercel
+```
+
+Copy anything `vercel env pull` didn't cover (it won't have secrets you
+haven't set in the dashboard yet) into `.env` — see `.env.example`. Then:
+
+```bash
 npm start
 ```
 
-The site is served at `http://localhost:5183`, and the admin dashboard at
-`http://localhost:5183/admin`.
+Site: `http://localhost:5183` · Admin: `http://localhost:5183/admin`
 
-`.claude/launch.json` is already set up so the Browser preview tool runs the
-same command.
-
-## First-time setup (`.env`)
-
-Copy `.env.example` to `.env` and fill in:
-
-- **`SESSION_SECRET`** — any long random string. Generate one with:
-  `node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"`
-- **`ADMIN_USERNAME`** / **`ADMIN_PASSWORD_HASH`** — the owner's login for
-  `/admin`. Set the password with:
-  `npm run hash-password -- "your-new-password"`, then paste the printed
-  hash into `.env`.
-- **`OWNER_EMAIL`** — where new-booking notification emails go.
-- **`SMTP_HOST`/`SMTP_PORT`/`SMTP_USER`/`SMTP_PASS`/`SMTP_FROM`** — an SMTP
-  account to send those emails from. Any provider's SMTP works: a Gmail
-  account with an **App Password** (not your normal password), Outlook,
-  or a transactional provider like Resend/SendGrid/Postmark via their SMTP
-  relay.
-
-Until SMTP + `OWNER_EMAIL` are filled in, bookings still save and appear in
-`/admin` — the server just logs a warning instead of emailing, so nothing
-breaks while you get credentials sorted.
-
-`.env` is git-ignored. Never commit it.
+You don't strictly need a Vercel project to develop locally — any Postgres
+connection string works for `POSTGRES_URL` (a free one from
+[Neon](https://neon.tech) or [Supabase](https://supabase.com) is fine for
+testing), but photo uploads specifically need a real `BLOB_READ_WRITE_TOKEN`
+from Vercel, since Blob is a Vercel-specific product.
 
 ## What the backend does
 
 - **Reservations** (`server/routes/bookings.js`, `server/store.js`) — each
-  seating (6:00 PM / 8:30 PM) is capped at 8 guests. The server rejects a
-  booking that would overflow a seating (`409 Conflict`), independent of
-  whatever the browser shows, so capacity can't be double-booked by two
-  people submitting at once. Bookings are stored in `data/bookings.json`.
-- **Owner notification** — a new booking triggers an email to `OWNER_EMAIL`
-  (`server/mailer.js`). The owner can also just check `/admin` — email is a
-  convenience, not the only way to see requests.
-- **Admin dashboard** (`admin/`) — sign in, see every reservation request
-  (date, seating, guests, contact, notes, reference), and mark each
-  Confirmed / Cancelled / Pending. This is also where photos are managed.
-- **Photo uploads** — the dashboard's Photos tab has 7 slots (hero image +
-  6 gallery photos). Uploading a JPEG/PNG/WebP/AVIF there replaces the
-  matching placeholder on the live site immediately — no code or file
-  editing needed. Files land in `/uploads` and are tracked in
-  `data/site-content.json`.
+  seating (6:00 PM / 8:30 PM) is capped at 8 guests. Capacity is checked
+  and the row inserted inside a single Postgres transaction guarded by an
+  advisory lock on that date+time, so two people booking the last seats at
+  the same instant can't both succeed — correct even across multiple
+  serverless instances, which don't share memory.
+- **Owner notification** — a new booking emails `OWNER_EMAIL`
+  (`server/mailer.js`), awaited before the request finishes (a serverless
+  function can be frozen right after it responds, which would otherwise
+  silently kill a "fire and forget" email send).
+- **Admin dashboard** (`admin/`) — sign in, see every reservation request,
+  mark each Confirmed / Cancelled / Pending, and manage photos.
+- **Photo uploads** — 7 slots (hero image + 6 gallery photos) in the
+  dashboard's Photos tab. Uploading replaces the matching placeholder on
+  the live site immediately; files are stored in Vercel Blob and their
+  public URLs saved in Postgres.
 
 ## Notes
 
-- `data/bookings.json`, `data/site-content.json`, and everything under
-  `/uploads` are git-ignored — they're runtime data (including guest names
-  and phone numbers), not source code.
-- Admin sessions use an in-memory store, so signing in again is needed
-  after a server restart.
+- `.env`, `.env.local`, and `.vercel/` are git-ignored.
+- Admin cookies are signed and stateless — no server-side session store,
+  so nothing to lose on a redeploy or cold start. They expire after 12
+  hours.

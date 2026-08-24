@@ -1,41 +1,19 @@
 "use strict";
 
-const fs = require("fs");
-const path = require("path");
 const crypto = require("crypto");
-
-const DATA_DIR = path.join(__dirname, "..", "data");
-const BOOKINGS_FILE = path.join(DATA_DIR, "bookings.json");
-const SITE_CONTENT_FILE = path.join(DATA_DIR, "site-content.json");
+const db = require("./db");
 
 const MAX_SEATS_PER_SEATING = 8;
 const VALID_TIMES = ["6:00 PM", "8:30 PM"];
-
-// Simple async write queue per file so concurrent requests never interleave
-// read-modify-write cycles (JSON files aren't safe for concurrent writers).
-const queues = new Map();
-function withFileLock(file, task) {
-  const prior = queues.get(file) || Promise.resolve();
-  const next = prior.then(task, task);
-  queues.set(file, next.catch(() => {}));
-  return next;
-}
-
-function readJson(file, fallback) {
-  try {
-    const raw = fs.readFileSync(file, "utf8");
-    return JSON.parse(raw);
-  } catch (err) {
-    if (err.code === "ENOENT") return fallback;
-    throw err;
-  }
-}
-
-function writeJsonAtomic(file, data) {
-  const tmp = file + ".tmp-" + process.pid + "-" + Date.now();
-  fs.writeFileSync(tmp, JSON.stringify(data, null, 2));
-  fs.renameSync(tmp, file);
-}
+const ALLOWED_IMAGE_KEYS = [
+  "hero",
+  "craftMain",
+  "craftGallery1",
+  "craftGallery2",
+  "craftGallery3",
+  "craftGallery4",
+  "craftGallery5",
+];
 
 function isDateClosed(dateKey) {
   // Restaurant is closed Mondays.
@@ -43,22 +21,40 @@ function isDateClosed(dateKey) {
   return d.getDay() === 1;
 }
 
-function listBookings() {
-  return readJson(BOOKINGS_FILE, []);
+function rowToBooking(r) {
+  return {
+    id: r.id,
+    reference: r.reference,
+    dateKey: r.date_key,
+    time: r.seating_time,
+    guests: r.guests,
+    name: r.name,
+    phone: r.phone,
+    notes: r.notes,
+    status: r.status,
+    createdAt: r.created_at,
+    updatedAt: r.updated_at || undefined,
+  };
 }
 
-function activeGuestsFor(bookings, dateKey, time) {
-  return bookings
-    .filter((b) => b.dateKey === dateKey && b.time === time && b.status !== "cancelled")
-    .reduce((sum, b) => sum + b.guests, 0);
+async function listBookings() {
+  const res = await db.query("SELECT * FROM bookings ORDER BY date_key, seating_time, created_at");
+  return res.rows.map(rowToBooking);
 }
 
-function getAvailability(dateKey) {
-  const bookings = listBookings();
+async function activeGuestsFor(dateKey, time) {
+  const res = await db.query(
+    "SELECT COALESCE(SUM(guests), 0) AS total FROM bookings WHERE date_key = $1 AND seating_time = $2 AND status <> 'cancelled'",
+    [dateKey, time]
+  );
+  return Number(res.rows[0].total);
+}
+
+async function getAvailability(dateKey) {
   const closed = isDateClosed(dateKey);
   const slots = {};
   for (const time of VALID_TIMES) {
-    const taken = closed ? MAX_SEATS_PER_SEATING : activeGuestsFor(bookings, dateKey, time);
+    const taken = closed ? MAX_SEATS_PER_SEATING : await activeGuestsFor(dateKey, time);
     slots[time] = {
       capacity: MAX_SEATS_PER_SEATING,
       taken,
@@ -66,6 +62,14 @@ function getAvailability(dateKey) {
     };
   }
   return { dateKey, closed, slots };
+}
+
+// Advisory locks serialize concurrent bookings for the same date+time slot
+// across every serverless instance (they're managed by Postgres itself, not
+// in-process memory, which is what a serverless deployment needs).
+function slotLockKey(dateKey, time) {
+  const hash = crypto.createHash("sha256").update(dateKey + "|" + time).digest();
+  return hash.readInt32BE(0); // pg_advisory_xact_lock takes a 32-bit signed int
 }
 
 async function createBooking({ dateKey, time, guests, name, phone, notes }) {
@@ -94,9 +98,14 @@ async function createBooking({ dateKey, time, guests, name, phone, notes }) {
     throw err;
   }
 
-  return withFileLock(BOOKINGS_FILE, () => {
-    const bookings = readJson(BOOKINGS_FILE, []);
-    const taken = activeGuestsFor(bookings, dateKey, time);
+  return withTransaction(async (client) => {
+    await client.query("SELECT pg_advisory_xact_lock($1)", [slotLockKey(dateKey, time)]);
+
+    const sumRes = await client.query(
+      "SELECT COALESCE(SUM(guests), 0) AS total FROM bookings WHERE date_key = $1 AND seating_time = $2 AND status <> 'cancelled'",
+      [dateKey, time]
+    );
+    const taken = Number(sumRes.rows[0].total);
     if (taken + guests > MAX_SEATS_PER_SEATING) {
       const err = new Error(
         "Only " + Math.max(0, MAX_SEATS_PER_SEATING - taken) + " seat(s) remain for that seating."
@@ -106,25 +115,33 @@ async function createBooking({ dateKey, time, guests, name, phone, notes }) {
     }
 
     const suffix = time === "8:30 PM" ? "B" : "A";
-    const reference = "TRN-" + dateKey.replace(/-/g, "") + "-" + guests + suffix + "-" + crypto.randomBytes(2).toString("hex").toUpperCase();
+    const reference =
+      "TRN-" + dateKey.replace(/-/g, "") + "-" + guests + suffix + "-" + crypto.randomBytes(2).toString("hex").toUpperCase();
+    const id = crypto.randomUUID();
 
-    const booking = {
-      id: crypto.randomUUID(),
-      reference,
-      dateKey,
-      time,
-      guests,
-      name,
-      phone,
-      notes,
-      status: "pending",
-      createdAt: new Date().toISOString(),
-    };
-
-    bookings.push(booking);
-    writeJsonAtomic(BOOKINGS_FILE, bookings);
-    return booking;
+    const insertRes = await client.query(
+      `INSERT INTO bookings (id, reference, date_key, seating_time, guests, name, phone, notes, status)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'pending')
+       RETURNING *`,
+      [id, reference, dateKey, time, guests, name, phone, notes]
+    );
+    return rowToBooking(insertRes.rows[0]);
   });
+}
+
+async function withTransaction(fn) {
+  const client = await db.connect();
+  try {
+    await client.query("BEGIN");
+    const result = await fn(client);
+    await client.query("COMMIT");
+    return result;
+  } catch (err) {
+    await client.query("ROLLBACK").catch(() => {});
+    throw err;
+  } finally {
+    client.release();
+  }
 }
 
 async function updateBookingStatus(id, status) {
@@ -133,38 +150,42 @@ async function updateBookingStatus(id, status) {
     err.statusCode = 400;
     throw err;
   }
-  return withFileLock(BOOKINGS_FILE, () => {
-    const bookings = readJson(BOOKINGS_FILE, []);
-    const booking = bookings.find((b) => b.id === id);
-    if (!booking) {
-      const err = new Error("Booking not found.");
-      err.statusCode = 404;
-      throw err;
-    }
-    booking.status = status;
-    booking.updatedAt = new Date().toISOString();
-    writeJsonAtomic(BOOKINGS_FILE, bookings);
-    return booking;
-  });
+  const res = await db.query(
+    "UPDATE bookings SET status = $1, updated_at = now() WHERE id = $2 RETURNING *",
+    [status, id]
+  );
+  if (res.rowCount === 0) {
+    const err = new Error("Booking not found.");
+    err.statusCode = 404;
+    throw err;
+  }
+  return rowToBooking(res.rows[0]);
 }
 
-function getSiteContent() {
-  return readJson(SITE_CONTENT_FILE, { images: {} });
+async function getSiteContent() {
+  const res = await db.query("SELECT key, url FROM site_images");
+  const byKey = {};
+  res.rows.forEach((r) => { byKey[r.key] = r.url; });
+  const images = {};
+  ALLOWED_IMAGE_KEYS.forEach((k) => { images[k] = byKey[k] || null; });
+  return { images };
 }
 
 async function setSiteImage(key, url) {
-  return withFileLock(SITE_CONTENT_FILE, () => {
-    const content = readJson(SITE_CONTENT_FILE, { images: {} });
-    content.images = content.images || {};
-    content.images[key] = url;
-    writeJsonAtomic(SITE_CONTENT_FILE, content);
-    return content;
-  });
+  const prevRes = await db.query("SELECT url FROM site_images WHERE key = $1", [key]);
+  const previousUrl = prevRes.rows[0] ? prevRes.rows[0].url : null;
+  await db.query(
+    `INSERT INTO site_images (key, url) VALUES ($1, $2)
+     ON CONFLICT (key) DO UPDATE SET url = EXCLUDED.url`,
+    [key, url]
+  );
+  return { previousUrl };
 }
 
 module.exports = {
   MAX_SEATS_PER_SEATING,
   VALID_TIMES,
+  ALLOWED_IMAGE_KEYS,
   isDateClosed,
   listBookings,
   getAvailability,

@@ -1,35 +1,18 @@
 "use strict";
 
 const express = require("express");
-const path = require("path");
-const fs = require("fs");
-const crypto = require("crypto");
 const multer = require("multer");
+const { put, del } = require("@vercel/blob");
 const store = require("../store");
 const { checkCredentials, requireAdmin } = require("../auth");
+const { createSessionCookie, clearSessionCookie, readSession } = require("../session");
 
 const router = express.Router();
 
-const UPLOADS_DIR = path.join(__dirname, "..", "..", "uploads");
-const ALLOWED_IMAGE_KEYS = [
-  "hero",
-  "craftMain",
-  "craftGallery1",
-  "craftGallery2",
-  "craftGallery3",
-  "craftGallery4",
-  "craftGallery5",
-];
 const ALLOWED_MIME = new Set(["image/jpeg", "image/png", "image/webp", "image/avif"]);
 
 const upload = multer({
-  storage: multer.diskStorage({
-    destination: (req, file, cb) => cb(null, UPLOADS_DIR),
-    filename: (req, file, cb) => {
-      const ext = path.extname(file.originalname).toLowerCase() || ".jpg";
-      cb(null, crypto.randomUUID() + ext);
-    },
-  }),
+  storage: multer.memoryStorage(),
   limits: { fileSize: 12 * 1024 * 1024 },
   fileFilter: (req, file, cb) => {
     if (!ALLOWED_MIME.has(file.mimetype)) {
@@ -38,6 +21,10 @@ const upload = multer({
     cb(null, true);
   },
 });
+
+function extFor(mimetype) {
+  return { "image/jpeg": "jpg", "image/png": "png", "image/webp": "webp", "image/avif": "avif" }[mimetype] || "jpg";
+}
 
 // POST /api/admin/login
 router.post("/login", (req, res) => {
@@ -51,25 +38,29 @@ router.post("/login", (req, res) => {
         : "Incorrect username or password.";
     return res.status(status).json({ error: message });
   }
-  req.session.isAdmin = true;
-  req.session.username = username;
+  res.setHeader("Set-Cookie", createSessionCookie(username));
   res.json({ ok: true });
 });
 
 // POST /api/admin/logout
 router.post("/logout", (req, res) => {
-  req.session.destroy(() => res.json({ ok: true }));
+  res.setHeader("Set-Cookie", clearSessionCookie());
+  res.json({ ok: true });
 });
 
 // GET /api/admin/me
 router.get("/me", (req, res) => {
-  res.json({ authenticated: !!(req.session && req.session.isAdmin) });
+  res.json({ authenticated: !!readSession(req) });
 });
 
 // GET /api/admin/bookings
-router.get("/bookings", requireAdmin, (req, res) => {
-  const bookings = store.listBookings().sort((a, b) => (a.dateKey + a.time).localeCompare(b.dateKey + b.time));
-  res.json({ bookings, maxSeats: store.MAX_SEATS_PER_SEATING });
+router.get("/bookings", requireAdmin, async (req, res, next) => {
+  try {
+    const bookings = await store.listBookings();
+    res.json({ bookings, maxSeats: store.MAX_SEATS_PER_SEATING });
+  } catch (err) {
+    next(err);
+  }
 });
 
 // PATCH /api/admin/bookings/:id  { status }
@@ -83,54 +74,64 @@ router.patch("/bookings/:id", requireAdmin, async (req, res) => {
 });
 
 // GET /api/admin/photos
-router.get("/photos", requireAdmin, (req, res) => {
-  const content = store.getSiteContent();
-  res.json({ images: content.images || {}, keys: ALLOWED_IMAGE_KEYS });
+router.get("/photos", requireAdmin, async (req, res, next) => {
+  try {
+    const content = await store.getSiteContent();
+    res.json({ images: content.images || {}, keys: store.ALLOWED_IMAGE_KEYS });
+  } catch (err) {
+    next(err);
+  }
 });
 
 // POST /api/admin/photos  (multipart form: field "image", body field "key")
 router.post("/photos", requireAdmin, upload.single("image"), async (req, res) => {
   const key = req.body && req.body.key;
-  if (!ALLOWED_IMAGE_KEYS.includes(key)) {
-    if (req.file) fs.unlink(req.file.path, () => {});
+  if (!store.ALLOWED_IMAGE_KEYS.includes(key)) {
     return res.status(400).json({ error: "Unknown image slot: " + key });
   }
   if (!req.file) {
     return res.status(400).json({ error: "No image file was uploaded." });
   }
+  if (!process.env.BLOB_READ_WRITE_TOKEN) {
+    return res.status(503).json({
+      error: "Photo storage isn't configured yet. Connect Vercel Blob storage to this project.",
+    });
+  }
 
   try {
-    const content = store.getSiteContent();
-    const previousUrl = content.images && content.images[key];
+    const pathname = "torinoa/" + key + "-" + Date.now() + "." + extFor(req.file.mimetype);
+    const blob = await put(pathname, req.file.buffer, {
+      access: "public",
+      contentType: req.file.mimetype,
+    });
 
-    const url = "/uploads/" + req.file.filename;
-    await store.setSiteImage(key, url);
+    const { previousUrl } = await store.setSiteImage(key, blob.url);
 
-    if (previousUrl && previousUrl.startsWith("/uploads/")) {
-      const previousPath = path.join(UPLOADS_DIR, path.basename(previousUrl));
-      fs.unlink(previousPath, () => {});
+    if (previousUrl) {
+      del(previousUrl).catch(() => {}); // best-effort cleanup, don't fail the request over it
     }
 
-    res.json({ key, url });
+    res.json({ key, url: blob.url });
   } catch (err) {
-    fs.unlink(req.file.path, () => {});
-    res.status(500).json({ error: "Could not save image." });
+    res.status(500).json({ error: err.message || "Could not save image." });
   }
 });
 
 // DELETE /api/admin/photos/:key — revert a slot back to the placeholder
 router.delete("/photos/:key", requireAdmin, async (req, res) => {
   const key = req.params.key;
-  if (!ALLOWED_IMAGE_KEYS.includes(key)) {
+  if (!store.ALLOWED_IMAGE_KEYS.includes(key)) {
     return res.status(400).json({ error: "Unknown image slot: " + key });
   }
-  const content = store.getSiteContent();
-  const previousUrl = content.images && content.images[key];
-  await store.setSiteImage(key, null);
-  if (previousUrl && previousUrl.startsWith("/uploads/")) {
-    fs.unlink(path.join(UPLOADS_DIR, path.basename(previousUrl)), () => {});
+  try {
+    const { previousUrl } = await store.setSiteImage(key, null);
+    if (previousUrl) {
+      del(previousUrl).catch(() => {});
+    }
+    res.json({ key, url: null });
+  } catch (err) {
+    res.status(500).json({ error: err.message || "Could not remove image." });
   }
-  res.json({ key, url: null });
 });
 
 router.use((err, req, res, next) => {
