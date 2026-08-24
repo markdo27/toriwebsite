@@ -57,7 +57,7 @@ router.get("/me", (req, res) => {
 router.get("/bookings", requireAdmin, async (req, res, next) => {
   try {
     const bookings = await store.listBookings();
-    res.json({ bookings, maxSeats: store.MAX_SEATS_PER_SEATING });
+    res.json({ bookings, maxSeats: await store.getDefaultMaxGuests() });
   } catch (err) {
     next(err);
   }
@@ -133,9 +133,110 @@ router.delete("/photos/:key", requireAdmin, async (req, res) => {
   }
 });
 
+// ---- Page text ----
+
+// GET /api/admin/content
+router.get("/content", requireAdmin, async (req, res, next) => {
+  try {
+    const text = await store.getTextContent();
+    res.json({ text, defaults: store.DEFAULT_TEXT, multiline: store.MULTILINE_TEXT_KEYS });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// PUT /api/admin/content/:key  { value }
+router.put("/content/:key", requireAdmin, async (req, res) => {
+  try {
+    const value = await store.setTextContent(req.params.key, req.body && req.body.value);
+    res.json({ key: req.params.key, value });
+  } catch (err) {
+    res.status(err.statusCode || 500).json({ error: err.message || "Could not save that field." });
+  }
+});
+
+// POST /api/admin/content/:key/reset — revert one field back to its default copy
+router.post("/content/:key/reset", requireAdmin, async (req, res) => {
+  try {
+    const value = await store.resetTextContent(req.params.key);
+    res.json({ key: req.params.key, value });
+  } catch (err) {
+    res.status(err.statusCode || 500).json({ error: err.message || "Could not reset that field." });
+  }
+});
+
+// ---- Section visibility ----
+
+// GET /api/admin/sections
+router.get("/sections", requireAdmin, async (req, res, next) => {
+  try {
+    res.json({ sections: await store.getSectionVisibility(), keys: store.SECTION_KEYS });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// PUT /api/admin/sections/:key  { visible }
+router.put("/sections/:key", requireAdmin, async (req, res) => {
+  try {
+    const visible = await store.setSectionVisibility(req.params.key, req.body && req.body.visible);
+    res.json({ key: req.params.key, visible });
+  } catch (err) {
+    res.status(err.statusCode || 500).json({ error: err.message || "Could not update that section." });
+  }
+});
+
+// ---- Seat capacity ----
+
+// GET /api/admin/capacity
+router.get("/capacity", requireAdmin, async (req, res, next) => {
+  try {
+    const [defaultMaxGuests, overrides] = await Promise.all([
+      store.getDefaultMaxGuests(),
+      store.getCapacityOverrides(),
+    ]);
+    res.json({ defaultMaxGuests, overrides });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// PUT /api/admin/capacity/default  { maxGuests }
+router.put("/capacity/default", requireAdmin, async (req, res) => {
+  try {
+    const maxGuests = await store.setDefaultMaxGuests(req.body && req.body.maxGuests);
+    res.json({ defaultMaxGuests: maxGuests });
+  } catch (err) {
+    res.status(err.statusCode || 500).json({ error: err.message || "Could not update the default capacity." });
+  }
+});
+
+// PUT /api/admin/capacity/overrides/:dateKey  { maxGuests }
+router.put("/capacity/overrides/:dateKey", requireAdmin, async (req, res) => {
+  try {
+    const override = await store.setCapacityOverride(req.params.dateKey, req.body && req.body.maxGuests);
+    res.json(override);
+  } catch (err) {
+    res.status(err.statusCode || 500).json({ error: err.message || "Could not save that override." });
+  }
+});
+
+// DELETE /api/admin/capacity/overrides/:dateKey
+router.delete("/capacity/overrides/:dateKey", requireAdmin, async (req, res, next) => {
+  try {
+    await store.deleteCapacityOverride(req.params.dateKey);
+    res.json({ ok: true });
+  } catch (err) {
+    next(err);
+  }
+});
+
 router.use((err, req, res, next) => {
-  if (err instanceof multer.MulterError || err) {
+  if (err instanceof multer.MulterError) {
     return res.status(400).json({ error: err.message || "Upload failed." });
+  }
+  if (err) {
+    return res.status(err.statusCode || 500).json({ error: err.message || "Something went wrong." });
   }
   next();
 });

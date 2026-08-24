@@ -382,22 +382,63 @@
     });
   }
 
+  function escapeHtml(s) {
+    var div = document.createElement("div");
+    div.textContent = s == null ? "" : String(s);
+    return div.innerHTML;
+  }
+
+  function applyText(text) {
+    text = text || {};
+    document.querySelectorAll("[data-content-key]").forEach(function (el) {
+      var value = text[el.getAttribute("data-content-key")];
+      if (value == null) return;
+      if (el.hasAttribute("data-multiline")) {
+        el.innerHTML = escapeHtml(value).replace(/\n/g, "<br>");
+      } else {
+        el.textContent = value;
+      }
+    });
+  }
+
+  var SECTION_KEYS = ["concept", "craft", "visit", "reserve"];
+
+  function applySections(sections) {
+    sections = sections || {};
+    SECTION_KEYS.forEach(function (key) {
+      if (sections[key] === false) {
+        var section = document.getElementById(key);
+        if (section) section.style.display = "none";
+        document.querySelectorAll('a[href="#' + key + '"]').forEach(function (a) {
+          a.style.display = "none";
+        });
+      }
+    });
+  }
+
   function loadSiteContent() {
-    fetch("/api/site-content")
-      .then(function (res) { return res.ok ? res.json() : { images: {} }; })
-      .then(function (data) { applyImages(data.images); })
+    return fetch("/api/site-content")
+      .then(function (res) { return res.ok ? res.json() : {}; })
+      .then(function (data) {
+        applyImages(data.images);
+        applyText(data.text);
+        applySections(data.sections);
+        if (Number.isInteger(data.maxGuests) && data.maxGuests > 0) {
+          MAX_GUESTS = data.maxGuests;
+        }
+      })
       .catch(function () {});
   }
 
   var yearEl = document.getElementById("tn-year");
   if (yearEl) yearEl.textContent = String(new Date().getFullYear());
 
-  loadSiteContent();
-  refreshAvailability()
-    .catch(function (err) {
+  Promise.all([
+    loadSiteContent(),
+    refreshAvailability().catch(function (err) {
       state.errorMessage = err.message;
-    })
-    .finally(render);
+    }),
+  ]).finally(render);
 
   // ---- Nav: mobile menu toggle + current-section indicator ----
   (function initNav() {

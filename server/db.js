@@ -52,6 +52,26 @@ async function ensureSchema() {
       key TEXT PRIMARY KEY,
       url TEXT
     );
+
+    CREATE TABLE IF NOT EXISTS site_text (
+      key TEXT PRIMARY KEY,
+      value TEXT
+    );
+
+    CREATE TABLE IF NOT EXISTS site_sections (
+      key TEXT PRIMARY KEY,
+      visible BOOLEAN NOT NULL DEFAULT TRUE
+    );
+
+    CREATE TABLE IF NOT EXISTS site_settings (
+      key TEXT PRIMARY KEY,
+      value TEXT
+    );
+
+    CREATE TABLE IF NOT EXISTS capacity_overrides (
+      date_key TEXT PRIMARY KEY,
+      max_guests INTEGER NOT NULL
+    );
   `);
   try {
     await schemaReady;

@@ -28,7 +28,7 @@ router.get("/availability", async (req, res, next) => {
         d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0") + "-" + String(d.getDate()).padStart(2, "0");
       dates.push(await store.getAvailability(dateKey));
     }
-    res.json({ start, days, maxSeats: store.MAX_SEATS_PER_SEATING, dates });
+    res.json({ start, days, maxSeats: await store.getDefaultMaxGuests(), dates });
   } catch (err) {
     next(err);
   }

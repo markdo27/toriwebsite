@@ -20,6 +20,9 @@
   var panels = {
     reservations: document.getElementById("tn-a-panel-reservations"),
     photos: document.getElementById("tn-a-panel-photos"),
+    content: document.getElementById("tn-a-panel-content"),
+    sections: document.getElementById("tn-a-panel-sections"),
+    capacity: document.getElementById("tn-a-panel-capacity"),
   };
 
   var bookingsBody = document.getElementById("tn-a-bookings-body");
@@ -48,6 +51,9 @@
     app.hidden = false;
     loadBookings();
     loadPhotos();
+    loadContent();
+    loadSections();
+    loadCapacity();
   }
 
   function showLogin() {
@@ -259,6 +265,254 @@
       .then(loadPhotos)
       .catch(function (err) { alert(err.message); });
   }
+
+  // ---- Content ----
+
+  var CONTENT_GROUPS = [
+    { title: "Hero", prefix: "hero." },
+    { title: "Concept", prefix: "concept." },
+    { title: "Craft", prefix: "craft." },
+    { title: "Visit", prefix: "visit." },
+    { title: "Reserve", prefix: "reserve." },
+    { title: "Footer", prefix: "footer." },
+  ];
+
+  var CONTENT_LABELS = {
+    "hero.kicker": "Kicker",
+    "hero.cityLabel": "City label",
+    "hero.ctaLabel": "Reserve button text",
+    "concept.eyebrow": "Eyebrow",
+    "concept.headline": "Headline (one line per row)",
+    "concept.body1": "Body paragraph 1",
+    "concept.body2": "Body paragraph 2 — soft-opening note",
+    "concept.note": "Callout note",
+    "craft.eyebrow": "Eyebrow",
+    "craft.headline": "Headline (one line per row)",
+    "craft.intro": "Intro paragraph",
+    "craft.captionMain": "Featured photo caption",
+    "craft.caption1": "Tile 1 caption",
+    "craft.caption2": "Tile 2 caption",
+    "craft.caption3": "Tile 3 caption",
+    "craft.caption4": "Tile 4 caption",
+    "craft.caption5": "Tile 5 caption",
+    "visit.eyebrow": "Eyebrow",
+    "visit.headline": "Headline",
+    "visit.card1Label": "Card 1 label",
+    "visit.card1Title": "Card 1 title",
+    "visit.card1Body": "Card 1 body",
+    "visit.card1Fineprint": "Card 1 fine print",
+    "visit.card2Label": "Card 2 label",
+    "visit.card2Title": "Card 2 title",
+    "visit.hoursNote": "Hours note",
+    "reserve.eyebrow": "Eyebrow",
+    "reserve.headline": "Headline (one line per row)",
+    "reserve.intro": "Intro paragraph",
+    "reserve.fineprint": "Fine print under the confirm button",
+    "footer.tagline": "Tagline",
+    "footer.note": "Policy note",
+  };
+
+  function loadContent() {
+    api("/api/admin/content")
+      .then(function (data) { renderContent(data.text || {}, data.defaults || {}, data.multiline || []); })
+      .catch(function (err) {
+        document.getElementById("tn-a-content-list").innerHTML =
+          "<p class=\"tn-a-empty\">" + escapeHtml(err.message) + "</p>";
+      });
+  }
+
+  function flashStatus(el) {
+    el.classList.add("show");
+    clearTimeout(el._flashTimer);
+    el._flashTimer = setTimeout(function () { el.classList.remove("show"); }, 1500);
+  }
+
+  function renderContent(text, defaults, multilineKeys) {
+    var container = document.getElementById("tn-a-content-list");
+    container.innerHTML = "";
+
+    CONTENT_GROUPS.forEach(function (group) {
+      var keys = Object.keys(defaults).filter(function (k) { return k.indexOf(group.prefix) === 0; });
+      if (!keys.length) return;
+
+      var groupEl = document.createElement("div");
+      groupEl.className = "tn-a-content-group";
+      var title = document.createElement("div");
+      title.className = "tn-a-content-group-title";
+      title.textContent = group.title;
+      groupEl.appendChild(title);
+
+      keys.forEach(function (key) {
+        var isMultiline = multilineKeys.indexOf(key) !== -1;
+        var value = text[key] || "";
+        var useTextarea = isMultiline || value.length > 90;
+
+        var item = document.createElement("div");
+        item.className = "tn-a-content-item";
+
+        var label = document.createElement("div");
+        label.className = "tn-a-content-item-label";
+        label.textContent = CONTENT_LABELS[key] || key;
+        item.appendChild(label);
+
+        var field = document.createElement(useTextarea ? "textarea" : "input");
+        if (!useTextarea) field.type = "text";
+        field.value = value;
+        item.appendChild(field);
+
+        var actions = document.createElement("div");
+        actions.className = "tn-a-content-item-actions";
+
+        var saveBtn = makeActionBtn("Save", function () {
+          api("/api/admin/content/" + encodeURIComponent(key), { method: "PUT", body: { value: field.value } })
+            .then(function () { flashStatus(status); })
+            .catch(function (err) { alert(err.message); });
+        });
+        var resetBtn = makeActionBtn("Reset to default", function () {
+          api("/api/admin/content/" + encodeURIComponent(key) + "/reset", { method: "POST" })
+            .then(function (data) {
+              field.value = data.value;
+              flashStatus(status);
+            })
+            .catch(function (err) { alert(err.message); });
+        });
+        var status = document.createElement("span");
+        status.className = "tn-a-content-item-status";
+        status.textContent = "Saved";
+
+        actions.appendChild(saveBtn);
+        actions.appendChild(resetBtn);
+        actions.appendChild(status);
+        item.appendChild(actions);
+
+        groupEl.appendChild(item);
+      });
+
+      container.appendChild(groupEl);
+    });
+  }
+
+  // ---- Sections ----
+
+  var SECTION_LABELS = {
+    concept: { name: "Concept", hint: "The “Eight seats, one fire” intro section." },
+    craft: { name: "Craft", hint: "The photo gallery and “White charcoal” section." },
+    visit: { name: "Visit", hint: "Dietary policy and location/contact cards." },
+    reserve: { name: "Reserve", hint: "The booking form — turning this off also hides every Reserve button and nav link." },
+  };
+
+  function loadSections() {
+    api("/api/admin/sections")
+      .then(function (data) { renderSections(data.sections || {}, data.keys || []); })
+      .catch(function (err) {
+        document.getElementById("tn-a-sections-list").innerHTML =
+          "<p class=\"tn-a-empty\">" + escapeHtml(err.message) + "</p>";
+      });
+  }
+
+  function renderSections(sections, keys) {
+    var container = document.getElementById("tn-a-sections-list");
+    container.innerHTML = "";
+
+    keys.forEach(function (key) {
+      var meta = SECTION_LABELS[key] || { name: key, hint: "" };
+      var row = document.createElement("div");
+      row.className = "tn-a-section-row";
+
+      var text = document.createElement("div");
+      var nameEl = document.createElement("div");
+      nameEl.className = "tn-a-section-row-name";
+      nameEl.textContent = meta.name;
+      var hintEl = document.createElement("div");
+      hintEl.className = "tn-a-section-row-hint";
+      hintEl.textContent = meta.hint;
+      text.appendChild(nameEl);
+      text.appendChild(hintEl);
+      row.appendChild(text);
+
+      var switchLabel = document.createElement("label");
+      switchLabel.className = "tn-a-switch";
+      var input = document.createElement("input");
+      input.type = "checkbox";
+      input.checked = sections[key] !== false;
+      input.addEventListener("change", function () {
+        var next = input.checked;
+        api("/api/admin/sections/" + key, { method: "PUT", body: { visible: next } })
+          .catch(function (err) {
+            alert(err.message);
+            input.checked = !next;
+          });
+      });
+      var track = document.createElement("span");
+      track.className = "tn-a-switch-track";
+      switchLabel.appendChild(input);
+      switchLabel.appendChild(track);
+      row.appendChild(switchLabel);
+
+      container.appendChild(row);
+    });
+  }
+
+  // ---- Capacity ----
+
+  function loadCapacity() {
+    var errorEl = document.getElementById("tn-a-capacity-error");
+    api("/api/admin/capacity")
+      .then(function (data) {
+        errorEl.hidden = true;
+        document.getElementById("tn-a-default-guests").value = data.defaultMaxGuests;
+        renderOverrides(data.overrides || []);
+      })
+      .catch(function (err) {
+        errorEl.textContent = err.message;
+        errorEl.hidden = false;
+      });
+  }
+
+  function renderOverrides(overrides) {
+    var body = document.getElementById("tn-a-overrides-body");
+    var empty = document.getElementById("tn-a-overrides-empty");
+    body.innerHTML = "";
+    empty.hidden = overrides.length > 0;
+
+    overrides.forEach(function (o) {
+      var tr = document.createElement("tr");
+      var dateTd = document.createElement("td");
+      dateTd.textContent = o.dateKey;
+      var guestsTd = document.createElement("td");
+      guestsTd.textContent = o.maxGuests === 0 ? "0 (closed)" : String(o.maxGuests);
+      var actionsTd = document.createElement("td");
+      actionsTd.appendChild(makeActionBtn("Remove", function () {
+        api("/api/admin/capacity/overrides/" + o.dateKey, { method: "DELETE" })
+          .then(loadCapacity)
+          .catch(function (err) { alert(err.message); });
+      }));
+      tr.appendChild(dateTd);
+      tr.appendChild(guestsTd);
+      tr.appendChild(actionsTd);
+      body.appendChild(tr);
+    });
+  }
+
+  document.getElementById("tn-a-save-default-guests").addEventListener("click", function () {
+    var val = Number(document.getElementById("tn-a-default-guests").value);
+    api("/api/admin/capacity/default", { method: "PUT", body: { maxGuests: val } })
+      .then(loadCapacity)
+      .catch(function (err) { alert(err.message); });
+  });
+
+  document.getElementById("tn-a-add-override").addEventListener("click", function () {
+    var dateKey = document.getElementById("tn-a-override-date").value;
+    var maxGuests = Number(document.getElementById("tn-a-override-guests").value);
+    if (!dateKey) { alert("Choose a date first."); return; }
+    api("/api/admin/capacity/overrides/" + dateKey, { method: "PUT", body: { maxGuests: maxGuests } })
+      .then(function () {
+        document.getElementById("tn-a-override-date").value = "";
+        document.getElementById("tn-a-override-guests").value = "";
+        loadCapacity();
+      })
+      .catch(function (err) { alert(err.message); });
+  });
 
   init();
 })();
