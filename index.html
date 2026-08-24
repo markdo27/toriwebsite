@@ -16,10 +16,15 @@
       <img class="crest" src="assets/torinoa-crest.svg" alt="Torinoa crest">
       <img class="wordmark" src="assets/torinoa-wordmark.svg" alt="Torinoa">
     </a>
-    <a href="#concept" class="tn-nav-link">Concept</a>
-    <a href="#craft" class="tn-nav-link">Craft</a>
-    <a href="#visit" class="tn-nav-link">Visit</a>
-    <a href="#reserve" class="tn-nav-reserve">Reserve</a>
+    <button type="button" class="tn-nav-toggle" id="tn-nav-toggle" aria-expanded="false" aria-controls="tn-nav-links">
+      <span></span><span></span><span></span>
+    </button>
+    <div class="tn-nav-links" id="tn-nav-links">
+      <a href="#concept" class="tn-nav-link">Concept</a>
+      <a href="#craft" class="tn-nav-link">Craft</a>
+      <a href="#visit" class="tn-nav-link">Visit</a>
+      <a href="#reserve" class="tn-nav-reserve">Reserve</a>
+    </div>
   </nav>
 
   <!-- HERO -->
@@ -126,7 +131,7 @@
           <div class="tn-fineprint">No substitutions · No à la carte</div>
         </div>
 
-        <div class="tn-card">
+        <div class="tn-card tn-card-accent">
           <div class="tn-card-label">Reservations &amp; location</div>
           <h3>By telephone only.</h3>
           <div>
